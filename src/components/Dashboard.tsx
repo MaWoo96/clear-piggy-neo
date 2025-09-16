@@ -19,6 +19,13 @@ import { format, subDays, startOfMonth } from 'date-fns';
 import { useTheme } from '../contexts/ThemeContext';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { refreshAllAccountBalances } from '../services/plaidRefresh';
+import { useIsMobile } from '../shared/hooks/useIsMobile';
+import { BottomNavigation } from '../mobile/navigation/BottomNavigation';
+import { MobileDashboard } from '../mobile/screens/MobileDashboard';
+import { MobileTransactions } from '../mobile/screens/MobileTransactions';
+import { MobileSettings } from '../mobile/screens/MobileSettings';
+import { FAB } from '../shared/components/FAB';
+import { Sheet } from '../shared/components/Sheet';
 
 interface Transaction {
   id: string;
@@ -34,6 +41,7 @@ interface Transaction {
 export const Dashboard: React.FC = () => {
   const { isDark, toggleTheme } = useTheme();
   const { workspace, profile, loading: workspaceLoading, error: workspaceError, refreshWorkspace } = useWorkspace();
+  const isMobile = useIsMobile();
   const [user, setUser] = useState<any>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -49,6 +57,7 @@ export const Dashboard: React.FC = () => {
   const [selectedDocument, setSelectedDocument] = useState<DocumentRecord | null>(null);
   const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [reviewSectionCollapsed, setReviewSectionCollapsed] = useState(false);
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
 
   useEffect(() => {
     if (workspace?.id) {
@@ -475,8 +484,9 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      {/* Sidebar */}
-      <div className="fixed left-0 top-0 h-full w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 z-10">
+      {/* Sidebar - Hidden on mobile */}
+      {!isMobile && (
+        <div className="fixed left-0 top-0 h-full w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 z-10">
         <div className="p-6">
           <div className="flex items-center gap-3 mb-8">
             <div className="w-10 h-10 bg-gray-900 dark:bg-gray-100 rounded-xl flex items-center justify-center">
@@ -553,11 +563,12 @@ export const Dashboard: React.FC = () => {
           </button>
         </div>
       </div>
+      )}
 
       {/* Main Content */}
-      <div className="ml-64">
+      <div className={isMobile ? '' : 'ml-64'}>
         {/* Top Bar */}
-        <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-8 py-4">
+        <div className={`bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 ${isMobile ? 'px-4 py-3' : 'px-8 py-4'}`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
@@ -671,9 +682,16 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* Content Area */}
-        <div className="p-8">
+        <div className={`${isMobile ? 'p-4 pb-20' : 'p-8'}`}>
           {activeTab === 'overview' && (
-            <div className="space-y-6">
+            isMobile ? (
+              <MobileDashboard
+                accounts={accounts}
+                transactions={transactions}
+                loading={loading}
+              />
+            ) : (
+              <div className="space-y-6">
               {/* Key Metrics */}
               <div className="grid grid-cols-4 gap-6">
                 <motion.div
@@ -812,6 +830,7 @@ export const Dashboard: React.FC = () => {
                 </div>
               </motion.div>
             </div>
+            )
           )}
 
           {activeTab === 'accounts' && (
@@ -916,7 +935,15 @@ export const Dashboard: React.FC = () => {
           )}
 
           {activeTab === 'transactions' && (
-            <MercuryTransactionsClean dateRange={dateRange} />
+            isMobile ? (
+              <MobileTransactions
+                transactions={transactions}
+                loading={loading}
+                onRefresh={loadDashboardData}
+              />
+            ) : (
+              <MercuryTransactionsClean dateRange={dateRange} />
+            )
           )}
 
           {activeTab === 'budget' && (
@@ -944,8 +971,82 @@ export const Dashboard: React.FC = () => {
               </div>
             </div>
           )}
+
+          {activeTab === 'settings' && (
+            isMobile ? (
+              <MobileSettings
+                profile={profile}
+                workspace={workspace}
+                onSignOut={handleSignOut}
+              />
+            ) : (
+              <div className="space-y-6">
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h2>
+                <p className="text-gray-600 dark:text-gray-400">Desktop settings view coming soon</p>
+              </div>
+            )
+          )}
         </div>
       </div>
+
+      {/* Mobile Bottom Navigation */}
+      {isMobile && (
+        <>
+          <BottomNavigation
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+          />
+
+          {/* Floating Action Button */}
+          {(activeTab === 'overview' || activeTab === 'transactions') && (
+            <FAB
+              onClick={() => setShowQuickAdd(true)}
+              icon={Plus}
+              label="Add Transaction"
+            />
+          )}
+
+          {/* Quick Add Sheet */}
+          <Sheet
+            isOpen={showQuickAdd}
+            onClose={() => setShowQuickAdd(false)}
+            title="Quick Actions"
+            size="md"
+          >
+            <div className="p-4 space-y-3">
+              <button className="w-full p-4 bg-primary-50 dark:bg-primary-900/20 rounded-lg text-left">
+                <div className="flex items-center gap-3">
+                  <Plus className="w-5 h-5 text-primary-600 dark:text-primary-400" />
+                  <div>
+                    <p className="font-medium text-gray-900 dark:text-white">Add Transaction</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Manually add income or expense</p>
+                  </div>
+                </div>
+              </button>
+
+              <button className="w-full p-4 bg-primary-50 dark:bg-primary-900/20 rounded-lg text-left">
+                <div className="flex items-center gap-3">
+                  <Receipt className="w-5 h-5 text-primary-600 dark:text-primary-400" />
+                  <div>
+                    <p className="font-medium text-gray-900 dark:text-white">Scan Receipt</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Take a photo or upload image</p>
+                  </div>
+                </div>
+              </button>
+
+              <button className="w-full p-4 bg-primary-50 dark:bg-primary-900/20 rounded-lg text-left">
+                <div className="flex items-center gap-3">
+                  <RefreshCw className="w-5 h-5 text-primary-600 dark:text-primary-400" />
+                  <div>
+                    <p className="font-medium text-gray-900 dark:text-white">Sync Accounts</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Update transactions from banks</p>
+                  </div>
+                </div>
+              </button>
+            </div>
+          </Sheet>
+        </>
+      )}
     </div>
   );
 };

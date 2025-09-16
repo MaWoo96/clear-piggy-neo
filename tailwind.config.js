@@ -85,6 +85,10 @@ module.exports = {
         'fade-in': 'fadeIn 0.3s ease-out',
         'scale-in': 'scaleIn 0.2s ease-out',
       },
+      screens: {
+        'motion-safe': {'raw': '(prefers-reduced-motion: no-preference)'},
+        'motion-reduce': {'raw': '(prefers-reduced-motion: reduce)'},
+      },
       keyframes: {
         slideIn: {
           '0%': { transform: 'translateY(-10px)', opacity: '0' },
@@ -104,7 +108,42 @@ module.exports = {
         'soft-lg': '0 8px 24px -4px rgba(0, 0, 0, 0.08)',
         'soft-xl': '0 20px 40px -8px rgba(0, 0, 0, 0.12)',
       },
+      screens: {
+        'xs': '375px',
+        'sm': '640px',
+        'md': '768px',
+        'lg': '1024px',
+        'xl': '1280px',
+        '2xl': '1536px',
+      },
+      spacing: {
+        'safe-top': 'env(safe-area-inset-top)',
+        'safe-bottom': 'env(safe-area-inset-bottom)',
+        'safe-left': 'env(safe-area-inset-left)',
+        'safe-right': 'env(safe-area-inset-right)',
+      },
     },
   },
-  plugins: [],
+  plugins: [
+    function({ addUtilities }) {
+      addUtilities({
+        '.pt-safe': {
+          paddingTop: 'env(safe-area-inset-top)',
+        },
+        '.pb-safe': {
+          paddingBottom: 'env(safe-area-inset-bottom)',
+        },
+        '.pl-safe': {
+          paddingLeft: 'env(safe-area-inset-left)',
+        },
+        '.pr-safe': {
+          paddingRight: 'env(safe-area-inset-right)',
+        },
+        '.min-touch': {
+          minHeight: '44px',
+          minWidth: '44px',
+        },
+      })
+    },
+  ],
 }
