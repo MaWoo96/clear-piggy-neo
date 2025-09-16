@@ -1,0 +1,71 @@
+{
+  "name": "Plaid Dashboard MCP",
+  "description": "Connect to Plaid's Dashboard MCP server for debugging and analytics",
+  "setup_instructions": [
+    "1. Run 'node scripts/plaid-mcp-debug.js' to get an OAuth token",
+    "2. Copy the Bearer token from the output",
+    "3. Add this configuration to your Claude Desktop or AI tool",
+    "4. The token expires after 15 minutes - refresh as needed"
+  ],
+  "mcp_configuration": {
+    "type": "mcp",
+    "server_label": "plaid",
+    "server_url": "https://api.dashboard.plaid.com/mcp/sse",
+    "require_approval": "never",
+    "headers": {
+      "Authorization": "Bearer YOUR_TOKEN_HERE"
+    }
+  },
+  "available_tools": [
+    {
+      "name": "plaid_debug_item",
+      "description": "Debug a specific Plaid item to diagnose connection issues",
+      "use_cases": [
+        "Check why transactions aren't updating",
+        "See if user needs to re-authenticate",
+        "View last successful/failed update times",
+        "Check webhook configuration"
+      ]
+    },
+    {
+      "name": "plaid_get_link_analytics",
+      "description": "Analyze Link conversion funnel and error rates",
+      "use_cases": [
+        "See where users drop off in Link flow",
+        "Monitor conversion rates",
+        "Track error patterns",
+        "Identify problematic institutions"
+      ]
+    },
+    {
+      "name": "plaid_get_usages",
+      "description": "Track API usage and consumption",
+      "use_cases": [
+        "Monitor API request volumes",
+        "Track product usage",
+        "Check rate limits",
+        "Analyze usage patterns"
+      ]
+    },
+    {
+      "name": "plaid_list_teams",
+      "description": "List all teams associated with your account",
+      "use_cases": [
+        "Verify team configuration",
+        "Check access permissions"
+      ]
+    }
+  ],
+  "example_queries": [
+    "Debug item ID <item_id> and tell me why transactions aren't updating",
+    "Analyze Link sessions from the last week and identify drop-off patterns",
+    "Check our API usage for the past month",
+    "Why are users failing to connect to Chase?",
+    "What's the conversion rate for Bank of America connections?"
+  ],
+  "troubleshooting": {
+    "token_expired": "Run the plaid-mcp-debug.js script again to get a new token",
+    "401_unauthorized": "Check that your Plaid credentials are for production environment",
+    "no_data": "Ensure you have production access and at least one Plaid product enabled"
+  }
+}
