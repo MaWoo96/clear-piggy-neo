@@ -125,6 +125,7 @@ module.exports = {
     },
   },
   plugins: [
+    require('daisyui'),
     function({ addUtilities }) {
       addUtilities({
         '.pt-safe': {
@@ -146,4 +147,14 @@ module.exports = {
       })
     },
   ],
+  daisyui: {
+    themes: ["light", "dark"],
+    darkTheme: "dark",
+    base: true,
+    styled: true,
+    utils: true,
+    rtl: false,
+    prefix: "",
+    logs: false,
+  },
 }

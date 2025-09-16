@@ -83,42 +83,16 @@ export const MobileTransactions: React.FC<MobileTransactionsProps> = ({
         )}
       </div>
 
-      {/* Transaction List with Pull-to-Refresh */}
-      <div
-        className="flex-1 overflow-y-auto"
-        onTouchStart={(e) => {
-          const touch = e.touches[0];
-          const startY = touch.pageY;
-
-          const handleTouchMove = (e: TouchEvent) => {
-            const touch = e.touches[0];
-            const currentY = touch.pageY;
-            const diff = currentY - startY;
-
-            if (diff > 100 && window.scrollY === 0) {
-              onRefresh();
-              document.removeEventListener('touchmove', handleTouchMove);
-            }
-          };
-
-          document.addEventListener('touchmove', handleTouchMove);
-
-          const handleTouchEnd = () => {
-            document.removeEventListener('touchmove', handleTouchMove);
-            document.removeEventListener('touchend', handleTouchEnd);
-          };
-
-          document.addEventListener('touchend', handleTouchEnd);
-        }}
-      >
+      {/* Transaction List */}
+      <div className="flex-1 overflow-y-auto -webkit-overflow-scrolling-touch">
         <AnimatePresence>
           {filteredTransactions.map((transaction, index) => (
             <motion.div
               key={transaction.id}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              transition={{ delay: index * 0.05, duration: 0.3 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
               className="relative"
             >
               <div
@@ -128,16 +102,7 @@ export const MobileTransactions: React.FC<MobileTransactionsProps> = ({
                 <button className="text-white text-sm">Delete</button>
               </div>
 
-              <motion.div
-                drag="x"
-                dragConstraints={{ left: -100, right: 0 }}
-                onDragEnd={(e, info) => {
-                  if (info.offset.x < -50) {
-                    handleSwipeAction(transaction.id, 'delete');
-                  }
-                }}
-                className="bg-white dark:bg-gray-800"
-              >
+              <div className="bg-white dark:bg-gray-800">
                 <ListItem
                   title={transaction.description}
                   subtitle={`${format(new Date(transaction.date), 'MMM d')} • ${transaction.category}`}
@@ -159,7 +124,7 @@ export const MobileTransactions: React.FC<MobileTransactionsProps> = ({
                   onClick={() => setSelectedTransaction(transaction)}
                   showChevron
                 />
-              </motion.div>
+              </div>
             </motion.div>
           ))}
         </AnimatePresence>

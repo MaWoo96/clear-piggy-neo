@@ -1,0 +1,87 @@
+/* iOS Performance Fixes */
+
+/* Prevent iOS bounce and rubber-band scrolling on the main container */
+.k-ios .k-page,
+.k-ios .k-page-content {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* Fix for iOS tap delay */
+* {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
+
+/* Smooth scrolling for iOS */
+.ios-scroll {
+  -webkit-overflow-scrolling: touch;
+  overflow-y: auto;
+  will-change: transform;
+}
+
+/* Prevent text selection on interactive elements */
+.k-list-item,
+.k-tabbar-link,
+.k-button,
+.k-segmented-button {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Hardware acceleration for lists */
+.k-list {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+/* Fix for iOS Safari toolbar overlapping */
+.k-page {
+  padding-bottom: env(safe-area-inset-bottom);
+  min-height: -webkit-fill-available;
+}
+
+/* Optimize sheet animations */
+.k-sheet {
+  will-change: transform;
+  transform: translateZ(0);
+}
+
+/* Fix sticky headers on iOS */
+.sticky {
+  position: -webkit-sticky;
+  position: sticky;
+}
+
+/* Reduce motion for better performance */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Fix iOS input issues */
+input, textarea {
+  font-size: 16px; /* Prevents zoom on focus */
+}
+
+/* Optimize card shadows for performance */
+.k-card {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  transform: translateZ(0);
+}
+
+/* Fix iOS scroll position issues */
+body {
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Optimize list item interactions */
+.k-list-item:active {
+  transition: background-color 0.1s;
+}
