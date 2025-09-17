@@ -1,68 +1,87 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, Brain, AlertCircle, CheckCircle, Sparkles, Zap, TrendingUp, Clock } from 'lucide-react';
-import { useRecategorization, RecategorizeMode } from '../hooks/useRecategorization';
-import { useAICategorize } from '../contexts/AICategorizeContext';
+import { Brain, Calendar } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 interface RecategorizeButtonProps {
   workspaceId: string;
   onComplete?: () => void;
+  dateRange?: string;
+  uncategorizedTransactions?: number;
 }
 
-export const RecategorizeButton: React.FC<RecategorizeButtonProps> = ({ 
-  workspaceId, 
-  onComplete 
+export const RecategorizeButton: React.FC<RecategorizeButtonProps> = ({
+  workspaceId,
+  onComplete,
+  dateRange,
+  uncategorizedTransactions
 }) => {
   const [showModal, setShowModal] = useState(false);
-  const [selectedMode, setSelectedMode] = useState<'uncategorized' | 'recategorize' | 'all'>('uncategorized');
-  const [batchSize, setBatchSize] = useState(10);
-  const [force, setForce] = useState(false);
+  const [selectedDateRange, setSelectedDateRange] = useState(dateRange || 'last_30');
   const [uncategorizedCount, setUncategorizedCount] = useState<number>(0);
-  
-  const {
-    recategorizeTransactions,
-    isProcessing: oldProcessing,
-    progress: oldProgress,
-    lastResult,
-    clearProgress: oldClearProgress
-  } = useRecategorization();
-  
-  const {
-    startCategorization,
-    isProcessing,
-    total,
-    processed,
-    clearProgress
-  } = useAICategorize();
 
-  // Fetch uncategorized transactions count
+  // Use prop value if provided, otherwise fetch from database
   useEffect(() => {
+    if (uncategorizedTransactions !== undefined) {
+      console.log('Using provided uncategorized count:', uncategorizedTransactions);
+      setUncategorizedCount(uncategorizedTransactions);
+      return;
+    }
+
     const fetchUncategorizedCount = async () => {
       if (!workspaceId) return;
-      
-      const { count } = await supabase
+
+      // Get date range if provided
+      const now = new Date();
+      let startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+      if (dateRange) {
+        switch(dateRange) {
+          case 'last_7':
+            startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+            break;
+          case 'last_30':
+            startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+            break;
+          case 'last_90':
+            startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+            break;
+        }
+      }
+
+      // Count transactions that don't have user categories (can have AI categories)
+      let query = supabase
         .from('feed_transactions')
         .select('*', { count: 'exact', head: true })
         .eq('workspace_id', workspaceId)
         .eq('direction', 'outflow')
-        .is('ai_category_primary', null)
         .is('user_category_primary', null);
-      
+
+      if (dateRange && dateRange !== 'all') {
+        query = query.gte('transaction_date', startDate.toISOString().split('T')[0]);
+      }
+
+      const { count, error } = await query;
+
+      if (error) {
+        console.error('Error fetching uncategorized count:', error);
+      }
+
+      console.log(`Transactions available for AI categorization (${dateRange || 'last_30'}):`, count);
       setUncategorizedCount(count || 0);
     };
 
     fetchUncategorizedCount();
-    
-    // Set up subscription for real-time updates
-    const subscription = supabase
-      .channel(`uncategorized-count-${workspaceId}`)
+
+    // Set up subscription to changes
+    const channel = supabase
+      .channel('uncategorized-transactions-changes')
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'feed_transactions',
-          filter: `workspace_id=eq.${workspaceId}`,
+          filter: `workspace_id=eq.${workspaceId}`
         },
         () => {
           fetchUncategorizedCount();
@@ -71,54 +90,183 @@ export const RecategorizeButton: React.FC<RecategorizeButtonProps> = ({
       .subscribe();
 
     return () => {
-      subscription.unsubscribe();
+      supabase.removeChannel(channel);
     };
-  }, [workspaceId]);
+  }, [workspaceId, uncategorizedTransactions, dateRange]);
 
-  const handleRecategorize = async () => {
+  const handleCategorizeAll = async () => {
     try {
-      // Start categorization using the new context
-      await startCategorization(selectedMode);
-      
-      // Close modal after starting
+      console.log(`🚀 Starting AI categorization for ${selectedDateRange} transactions`);
+      console.log(`📅 Selected date range:`, selectedDateRange);
+
+      // Close modal immediately
       setShowModal(false);
-      
-      // The progress indicator will handle the rest
-      onComplete?.();
+
+      // Calculate date filter based on range
+      let startDate = null;
+      const now = new Date();
+
+      if (selectedDateRange !== 'all') {
+        switch(selectedDateRange) {
+          case 'last_7':
+            startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+            break;
+          case 'last_30':
+            startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+            break;
+          case 'last_90':
+            startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+            break;
+          default:
+            startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        }
+      }
+
+      console.log(`🔍 Fetching transactions from:`, startDate ? startDate.toISOString() : 'all time');
+
+      // Build query for transactions to get
+      // Remove the category null checks to allow re-categorization of all transactions
+      let query = supabase
+        .from('feed_transactions')
+        .select('*')
+        .eq('workspace_id', workspaceId)
+        .eq('direction', 'outflow')
+        .order('transaction_date', { ascending: false })
+        .limit(100); // Limit to 100 transactions at once
+
+      if (startDate) {
+        query = query.gte('transaction_date', startDate.toISOString().split('T')[0]);
+      }
+
+      console.log(`⏳ Executing query...`);
+      const { data: transactions, error: fetchError } = await query;
+
+      console.log(`📊 Query result:`, {
+        transactionCount: transactions?.length || 0,
+        hasError: !!fetchError,
+        error: fetchError
+      });
+
+      if (fetchError) {
+        console.error('❌ Error fetching transactions:', fetchError);
+        return;
+      }
+
+      if (!transactions || transactions.length === 0) {
+        console.log('❌ No transactions found for the selected date range');
+        console.log(`🔍 Query details:`, {
+          workspace_id: workspaceId,
+          date_from: startDate ? startDate.toISOString() : 'all time',
+          filters: 'direction=outflow'
+        });
+        onComplete?.();
+        return;
+      }
+
+      console.log(`✅ Successfully fetched ${transactions.length} transactions`);
+
+      console.log(`✅ Found ${transactions.length} transactions to send to n8n`);
+
+      // Format transactions for n8n workflow
+      console.log(`🔄 Formatting ${transactions.length} transactions for webhook...`);
+
+      try {
+        const formattedTransactions = transactions.map(tx => ({
+          id: tx.id,
+          merchant_name: tx.merchant_name || 'Unknown',
+          amount_cents: tx.amount_cents,
+          transaction_date: tx.transaction_date,
+          description: tx.description || '',
+          direction: tx.direction,
+          personal_finance_category_primary: tx.personal_finance_category_primary,
+          personal_finance_category_detailed: tx.personal_finance_category_detailed,
+          personal_finance_category_confidence: tx.personal_finance_category_confidence,
+          plaid_enriched: tx.plaid_enriched,
+          payment_method: tx.payment_method,
+          location_city: tx.location_city,
+          location_region: tx.location_region,
+          merchant_logo_url: tx.merchant_logo_url,
+          merchant_website: tx.merchant_website
+        }));
+
+        console.log(`✅ Successfully formatted ${formattedTransactions.length} transactions`);
+
+        console.log(`📦 Prepared payload with ${formattedTransactions.length} transactions`);
+        console.log(`🎯 Webhook URL: https://primary-ijlh-production.up.railway.app/webhook/categorize-transactions`);
+
+        // Log transaction order and details
+        console.log(`📅 Transaction ordering (latest to earliest):`);
+        formattedTransactions.slice(0, 5).forEach((tx, index) => {
+          console.log(`  ${index + 1}. ${tx.transaction_date} - ${tx.merchant_name} - $${(tx.amount_cents / 100).toFixed(2)}`);
+        });
+        if (formattedTransactions.length > 5) {
+          console.log(`  ... and ${formattedTransactions.length - 5} more transactions`);
+        }
+
+        // Send to n8n workflow with transaction data
+        const webhookUrl = 'https://primary-ijlh-production.up.railway.app/webhook/categorize-transactions';
+        const payload = {
+          workspace_id: workspaceId,
+          transactions: formattedTransactions
+        };
+
+        console.log(`📤 Sending webhook request...`);
+        console.log(`📊 Payload preview:`, {
+          workspace_id: workspaceId,
+          transaction_count: formattedTransactions.length,
+          sample_transaction: formattedTransactions[0],
+          date_range: `${formattedTransactions[formattedTransactions.length - 1]?.transaction_date} to ${formattedTransactions[0]?.transaction_date}`
+        });
+
+        console.log(`📋 Full payload being sent:`, JSON.stringify(payload, null, 2));
+
+        const response = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload)
+        });
+
+        console.log(`📨 Webhook response status:`, response.status, response.statusText);
+
+        if (!response.ok) {
+          console.error('❌ n8n webhook call failed:', response.status, response.statusText);
+          try {
+            const errorText = await response.text();
+            console.error('❌ Error response:', errorText);
+          } catch (e) {
+            console.error('❌ Could not read error response');
+          }
+        } else {
+          console.log('✅ n8n workflow triggered successfully with', formattedTransactions.length, 'transactions');
+          try {
+            const responseData = await response.text();
+            console.log('📝 Webhook response:', responseData);
+          } catch (e) {
+            console.log('📝 No response body');
+          }
+        }
+
+        // Call completion callback
+        onComplete?.();
+
+      } catch (formatError) {
+        console.error('❌ Error formatting transactions or calling webhook:', formatError);
+        if (formatError instanceof Error) {
+          console.error('❌ Format error details:', formatError.message, formatError.stack);
+        }
+      }
     } catch (error) {
-      console.error('Recategorization failed:', error);
+      console.error('Failed to trigger n8n workflow:', error);
     }
   };
 
-  const modeOptions = [
-    {
-      value: 'uncategorized' as 'uncategorized' | 'recategorize' | 'all',
-      label: 'Fill Gaps',
-      description: 'Categorize uncategorized only',
-      icon: <Sparkles className="w-5 h-5" />,
-      color: 'from-blue-500 to-cyan-600'
-    },
-    {
-      value: 'recategorize' as 'uncategorized' | 'recategorize' | 'all',
-      label: 'Smart Update',
-      description: 'Re-analyze AI categories',
-      icon: <Brain className="w-5 h-5" />,
-      color: 'from-purple-500 to-indigo-600'
-    },
-    {
-      value: 'all' as 'uncategorized' | 'recategorize' | 'all',
-      label: 'Full Refresh',
-      description: 'Recategorize everything',
-      icon: <Zap className="w-5 h-5" />,
-      color: 'from-orange-500 to-red-600'
-    }
-  ];
-
-  const batchOptions = [
-    { value: 5, label: 'Quick', description: '5 at a time' },
-    { value: 10, label: 'Balanced', description: '10 at a time' },
-    { value: 25, label: 'Fast', description: '25 at a time' },
-    { value: 50, label: 'Turbo', description: '50 at a time' }
+  const dateRangeOptions = [
+    { value: 'last_7', label: 'Last 7 Days' },
+    { value: 'last_30', label: 'Last 30 Days' },
+    { value: 'last_90', label: 'Last 90 Days' },
+    { value: 'all', label: 'All Time' }
   ];
 
   return (
@@ -132,12 +280,12 @@ export const RecategorizeButton: React.FC<RecategorizeButtonProps> = ({
             </div>
           </div>
         )}
-        
+
         {/* Main Button */}
         <button
           onClick={() => setShowModal(true)}
           className="group relative flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:from-purple-700 hover:to-indigo-700 transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105"
-          title={`Categorize ${uncategorizedCount} transactions using AI`}
+          title="Categorize transactions using AI"
         >
           <div className="absolute inset-0 bg-white opacity-0 group-hover:opacity-10 rounded-xl transition-opacity" />
           <Brain className="w-4 h-4" />
@@ -147,7 +295,7 @@ export const RecategorizeButton: React.FC<RecategorizeButtonProps> = ({
 
       {showModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden shadow-2xl">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl max-w-md w-full shadow-2xl">
             {/* Header */}
             <div className="relative bg-gradient-to-r from-purple-600 to-indigo-600 p-6">
               <div className="absolute inset-0 bg-black opacity-10" />
@@ -159,212 +307,65 @@ export const RecategorizeButton: React.FC<RecategorizeButtonProps> = ({
                   <h2 className="text-2xl font-bold text-white">AI Categorization</h2>
                 </div>
                 <p className="text-white/90 text-sm">
-                  Intelligently categorize your transactions using AI and learned patterns
+                  Automatically categorize your transactions
                 </p>
               </div>
             </div>
 
             {/* Content */}
-            <div className="p-6 overflow-y-auto max-h-[60vh]">
-              {!isProcessing && !lastResult && (
-                <>
-                  {/* Mode Selection */}
-                  <div className="mb-6">
-                    <label className="block text-sm font-semibold text-gray-300 mb-3">
-                      Processing Mode
-                    </label>
-                    <div className="grid grid-cols-3 gap-3">
-                      {modeOptions.map((option) => (
-                        <button
-                          key={option.value}
-                          onClick={() => setSelectedMode(option.value)}
-                          className={`relative p-4 rounded-xl border-2 transition-all duration-300 ${
-                            selectedMode === option.value
-                              ? 'border-purple-500 bg-purple-500/10'
-                              : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
-                          }`}
-                        >
-                          <div className={`absolute inset-0 bg-gradient-to-br ${option.color} opacity-0 ${
-                            selectedMode === option.value ? 'opacity-5' : ''
-                          } rounded-xl transition-opacity`} />
-                          <div className="relative">
-                            <div className={`mb-2 ${
-                              selectedMode === option.value ? 'text-purple-400' : 'text-gray-400'
-                            }`}>
-                              {option.icon}
-                            </div>
-                            <div className="text-sm font-semibold text-white mb-1">
-                              {option.label}
-                            </div>
-                            <div className="text-xs text-gray-400">
-                              {option.description}
-                            </div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Batch Size */}
-                  <div className="mb-6">
-                    <label className="block text-sm font-semibold text-gray-300 mb-3">
-                      Processing Speed
-                    </label>
-                    <div className="grid grid-cols-4 gap-3">
-                      {batchOptions.map((option) => (
-                        <button
-                          key={option.value}
-                          onClick={() => setBatchSize(option.value)}
-                          className={`p-3 rounded-xl border-2 transition-all duration-300 ${
-                            batchSize === option.value
-                              ? 'border-blue-500 bg-blue-500/10'
-                              : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
-                          }`}
-                        >
-                          <div className="text-sm font-semibold text-white mb-1">
-                            {option.label}
-                          </div>
-                          <div className="text-xs text-gray-400">
-                            {option.description}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                    <p className="text-xs text-gray-500 mt-2 flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      Smaller batches are more responsive but take longer overall
-                    </p>
-                  </div>
-
-                  {/* Force Option */}
-                  {selectedMode === 'all' && (
-                    <div className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl">
-                      <label className="flex items-start gap-3 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={force}
-                          onChange={(e) => setForce(e.target.checked)}
-                          className="mt-1 rounded border-gray-600 bg-gray-800 text-yellow-500 focus:ring-yellow-500"
-                        />
-                        <div className="flex-1">
-                          <div className="text-sm font-semibold text-yellow-400 mb-1">
-                            Override Manual Edits
-                          </div>
-                          <div className="text-xs text-gray-400">
-                            This will replace your manual category selections with AI suggestions
-                          </div>
-                          {force && (
-                            <div className="mt-2 flex items-start gap-1 text-xs text-yellow-500">
-                              <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                              <span>Your manual corrections will be overwritten!</span>
-                            </div>
-                          )}
-                        </div>
-                      </label>
-                    </div>
-                  )}
-
-                  {/* Info Cards */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-4 bg-gradient-to-br from-purple-900/20 to-indigo-900/20 rounded-xl border border-purple-500/20">
-                      <div className="flex items-center gap-2 mb-2">
-                        <TrendingUp className="w-4 h-4 text-purple-400" />
-                        <span className="text-sm font-semibold text-purple-300">Smart Learning</span>
+            <div className="p-6">
+              {/* Date Range Selection */}
+              <div className="mb-6">
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                  <Calendar className="inline w-4 h-4 mr-2" />
+                  Select Time Period
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  {dateRangeOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => setSelectedDateRange(option.value)}
+                      className={`p-3 rounded-xl border-2 transition-all duration-300 ${
+                        selectedDateRange === option.value
+                          ? 'border-purple-500 bg-purple-50 dark:bg-purple-500/10'
+                          : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/50 hover:border-gray-300 dark:hover:border-gray-600'
+                      }`}
+                    >
+                      <div className={`text-sm font-semibold ${
+                        selectedDateRange === option.value
+                          ? 'text-purple-600 dark:text-purple-400'
+                          : 'text-gray-700 dark:text-white'
+                      }`}>
+                        {option.label}
                       </div>
-                      <p className="text-xs text-gray-400">
-                        Uses patterns from your 17 corrections to improve accuracy
-                      </p>
-                    </div>
-                    <div className="p-4 bg-gradient-to-br from-blue-900/20 to-cyan-900/20 rounded-xl border border-blue-500/20">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Zap className="w-4 h-4 text-blue-400" />
-                        <span className="text-sm font-semibold text-blue-300">Batch Processing</span>
-                      </div>
-                      <p className="text-xs text-gray-400">
-                        Efficiently processes transactions without freezing the UI
-                      </p>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {/* Processing State - Now handled by global indicator */}
-
-              {/* Results */}
-              {lastResult && (
-                <div className="py-8">
-                  <div className="flex flex-col items-center mb-6">
-                    <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mb-3">
-                      <CheckCircle className="w-8 h-8 text-green-400" />
-                    </div>
-                    <h3 className="text-xl font-bold text-white mb-1">Categorization Complete!</h3>
-                    <p className="text-sm text-gray-400">Successfully processed your transactions</p>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-4 mb-6">
-                    <div className="bg-gray-800/50 rounded-xl p-4">
-                      <div className="text-2xl font-bold text-white mb-1">
-                        {lastResult.recategorized}
-                      </div>
-                      <div className="text-xs text-gray-400">Recategorized</div>
-                    </div>
-                    <div className="bg-gray-800/50 rounded-xl p-4">
-                      <div className="text-2xl font-bold text-purple-400 mb-1">
-                        {lastResult.learned_patterns_used}
-                      </div>
-                      <div className="text-xs text-gray-400">Used Learned Patterns</div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between py-2 border-b border-gray-800">
-                      <span className="text-gray-400">Total Processed</span>
-                      <span className="text-white font-medium">{lastResult.processed}</span>
-                    </div>
-                    <div className="flex justify-between py-2 border-b border-gray-800">
-                      <span className="text-gray-400">AI Categorized</span>
-                      <span className="text-blue-400 font-medium">{lastResult.ai_categorized}</span>
-                    </div>
-                    <div className="flex justify-between py-2">
-                      <span className="text-gray-400">Skipped</span>
-                      <span className="text-gray-500 font-medium">{lastResult.skipped}</span>
-                    </div>
-                  </div>
+                    </button>
+                  ))}
                 </div>
-              )}
-            </div>
+              </div>
 
-            {/* Footer */}
-            <div className="border-t border-gray-800 p-6">
-              {!isProcessing && !lastResult && (
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setShowModal(false)}
-                    className="flex-1 px-4 py-3 bg-gray-800 hover:bg-gray-700 text-white rounded-xl transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleRecategorize}
-                    className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl transition-all duration-300 flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                    Start Categorization
-                  </button>
-                </div>
-              )}
-              
-              {lastResult && (
+              {/* Info Box */}
+              <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 rounded-xl">
+                <p className="text-sm text-blue-700 dark:text-blue-300">
+                  This will categorize all transactions in the selected period using AI.
+                  The process runs in the background and you can continue using the app.
+                </p>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3">
                 <button
-                  onClick={() => {
-                    setShowModal(false);
-                    clearProgress();
-                  }}
-                  className="w-full px-4 py-3 bg-gray-800 hover:bg-gray-700 text-white rounded-xl transition-colors"
+                  onClick={() => setShowModal(false)}
+                  className="flex-1 px-4 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                 >
-                  Done
+                  Cancel
                 </button>
-              )}
+                <button
+                  onClick={handleCategorizeAll}
+                  className="flex-1 px-4 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:from-purple-700 hover:to-indigo-700 transition-all duration-300 shadow-lg hover:shadow-xl"
+                >
+                  Categorize All
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Logo Enrichment</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #10b981;
+            padding-bottom: 10px;
+        }
+        button {
+            background: #10b981;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 10px 0;
+            transition: all 0.3s;
+        }
+        button:hover {
+            background: #059669;
+            transform: translateY(-1px);
+        }
+        button:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f0fdf4;
+            border: 1px solid #86efac;
+            border-radius: 6px;
+            white-space: pre-wrap;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 14px;
+        }
+        .error {
+            background: #fef2f2;
+            border-color: #fca5a5;
+            color: #991b1b;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #10b981;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .logo-preview {
+            margin-top: 20px;
+            text-align: center;
+        }
+        .logo-preview img {
+            max-width: 200px;
+            max-height: 100px;
+            border: 1px solid #e5e7eb;
+            padding: 10px;
+            border-radius: 8px;
+            background: white;
+        }
+        .info {
+            background: #eff6ff;
+            border: 1px solid #93c5fd;
+            color: #1e40af;
+            padding: 12px;
+            border-radius: 6px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏦 Institution Logo Enrichment Test</h1>
+
+        <div class="info">
+            This will attempt to fetch and store logos for Wells Fargo from multiple sources:
+            <ul>
+                <li>Clearbit Logo API</li>
+                <li>Google Favicons</li>
+                <li>DuckDuckGo Icons</li>
+                <li>Logo.dev API</li>
+            </ul>
+        </div>
+
+        <button id="enrichWellsFargo" onclick="enrichWellsFargo()">
+            Enrich Wells Fargo Logo
+        </button>
+
+        <button id="checkInstitution" onclick="checkInstitution()">
+            Check Current Institution Data
+        </button>
+
+        <button id="refreshAccounts" onclick="refreshAccounts()">
+            Refresh All Accounts (Rebuild Dashboard)
+        </button>
+
+        <div id="result"></div>
+        <div id="logoPreview" class="logo-preview"></div>
+    </div>
+
+    <script>
+        // Get credentials from localStorage
+        const SUPABASE_URL = 'https://rnevebffhtplbixdmbgq.supabase.co';
+        const SUPABASE_ANON_KEY = localStorage.getItem('supabase.auth.token') ?
+            JSON.parse(localStorage.getItem('supabase.auth.token')).currentSession?.access_token :
+            'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJuZXZlYmZmaHRwbGJpeGRtYmdxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY2NjI5ODQsImV4cCI6MjA3MjIzODk4NH0.VNnnzLLo2Pi5IxAy2-ZPVAbnbrIQLe9xi7tKcPnWOLw';
+
+        async function enrichWellsFargo() {
+            const button = document.getElementById('enrichWellsFargo');
+            const resultDiv = document.getElementById('result');
+            const logoPreview = document.getElementById('logoPreview');
+
+            button.disabled = true;
+            button.innerHTML = 'Enriching... <span class="loading"></span>';
+            resultDiv.innerHTML = '';
+            logoPreview.innerHTML = '';
+
+            try {
+                // First get the Wells Fargo institution ID
+                const { createClient } = window.supabase;
+                const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+                const { data: institutions, error: instError } = await client
+                    .from('institutions')
+                    .select('id, workspace_id, name, logo_url')
+                    .eq('name', 'Wells Fargo')
+                    .limit(1);
+
+                if (instError || !institutions?.length) {
+                    throw new Error('Wells Fargo institution not found. Please connect a Wells Fargo account first.');
+                }
+
+                const institution = institutions[0];
+                console.log('Found institution:', institution);
+
+                // Call the enrichment function
+                const response = await fetch(`${SUPABASE_URL}/functions/v1/enrich-institution-logos`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        institution_id: institution.id,
+                        workspace_id: institution.workspace_id,
+                        force_refresh: true
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    resultDiv.className = 'result';
+                    resultDiv.textContent = `✅ Success!\n\n${JSON.stringify(result, null, 2)}`;
+
+                    // Show the logo if returned
+                    if (result.logo_url) {
+                        logoPreview.innerHTML = `
+                            <h3>Logo Preview:</h3>
+                            <img src="${result.logo_url}" alt="Wells Fargo Logo" />
+                            <p>Source: ${result.source}</p>
+                        `;
+                    }
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.textContent = `❌ Failed:\n\n${JSON.stringify(result, null, 2)}`;
+                }
+
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `Error: ${error.message}`;
+            } finally {
+                button.disabled = false;
+                button.innerHTML = 'Enrich Wells Fargo Logo';
+            }
+        }
+
+        async function checkInstitution() {
+            const button = document.getElementById('checkInstitution');
+            const resultDiv = document.getElementById('result');
+            const logoPreview = document.getElementById('logoPreview');
+
+            button.disabled = true;
+            button.innerHTML = 'Checking... <span class="loading"></span>';
+
+            try {
+                const { createClient } = window.supabase;
+                const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+                const { data: institutions, error } = await client
+                    .from('institutions')
+                    .select('*')
+                    .eq('name', 'Wells Fargo');
+
+                if (error) throw error;
+
+                resultDiv.className = 'result';
+                resultDiv.textContent = `Wells Fargo Institution Data:\n\n${JSON.stringify(institutions, null, 2)}`;
+
+                // Show logo if exists
+                if (institutions?.[0]?.logo_url) {
+                    logoPreview.innerHTML = `
+                        <h3>Current Logo:</h3>
+                        <img src="${institutions[0].logo_url}" alt="Wells Fargo Logo" />
+                        <p>Source: ${institutions[0].logo_source || 'Unknown'}</p>
+                    `;
+                } else {
+                    logoPreview.innerHTML = '<p>No logo found</p>';
+                }
+
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `Error: ${error.message}`;
+            } finally {
+                button.disabled = false;
+                button.innerHTML = 'Check Current Institution Data';
+            }
+        }
+
+        async function refreshAccounts() {
+            const button = document.getElementById('refreshAccounts');
+            button.disabled = true;
+            button.innerHTML = 'Refreshing... <span class="loading"></span>';
+
+            // Just reload the page to trigger a dashboard refresh
+            alert('Please refresh the dashboard to see the updated logos');
+            window.location.href = 'http://localhost:3003';
+        }
+    </script>
+
+    <!-- Include Supabase client -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</body>
+</html>

@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Target, TrendingUp, AlertCircle, Plus, RefreshCw, 
+import {
+  Target, TrendingUp, AlertCircle, Plus, RefreshCw,
   ChevronRight, DollarSign, Activity, Eye, EyeOff,
   Sparkles, Calculator, PieChart, ChevronDown, Receipt,
-  Calendar, Shuffle, Tag, Settings
+  Calendar, Shuffle, Tag, Settings, Layout
 } from 'lucide-react';
 import { useBudget } from '../../hooks/useBudget';
 import { useBudgetEnhanced } from '../../hooks/useBudgetEnhanced';
@@ -12,12 +12,14 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { formatCurrency, supabase } from '../../lib/supabase';
 import { BudgetWizard } from './BudgetWizard';
 import { BudgetCategoryCard } from './BudgetCategoryCard';
+import { BudgetGroupCard } from './BudgetGroupCard';
 import { BudgetProgressRing } from './BudgetProgressRing';
 import { BudgetInsights } from './BudgetInsights';
 import { BudgetPeriodSelector } from './BudgetPeriodSelector';
 import { BudgetStrategySelector } from './BudgetStrategySelector';
 import { TransactionBudgetAssignment } from './TransactionBudgetAssignment';
 import { IncomeExpensesSummary } from './IncomeExpensesSummary';
+import { BUDGET_GROUPS, groupBudgetLines } from '../../utils/budgetGroups';
 import { format } from 'date-fns';
 
 const BudgetDashboardEnhancedComponent: React.FC = () => {
@@ -46,6 +48,7 @@ const BudgetDashboardEnhancedComponent: React.FC = () => {
   const [showWizard, setShowWizard] = useState(false);
   const [showEnhancedWizard, setShowEnhancedWizard] = useState(false);
   const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards');
+  const [groupedView, setGroupedView] = useState(true);
   const [showOverBudgetOnly, setShowOverBudgetOnly] = useState(false);
   const [showStrategySelector, setShowStrategySelector] = useState(false);
   const [assigningTransaction, setAssigningTransaction] = useState<any>(null);
@@ -484,6 +487,16 @@ const BudgetDashboardEnhancedComponent: React.FC = () => {
                   </button>
                   <button
                     onClick={() => {
+                      setGroupedView(!groupedView);
+                      setShowSettings(false);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg text-left"
+                  >
+                    <Layout className="h-4 w-4" />
+                    <span>{groupedView ? 'Show Individual Cards' : 'Show Grouped View'}</span>
+                  </button>
+                  <button
+                    onClick={() => {
                       setShowOverBudgetOnly(!showOverBudgetOnly);
                       setShowSettings(false);
                     }}
@@ -734,21 +747,51 @@ const BudgetDashboardEnhancedComponent: React.FC = () => {
       )}
 
       {viewMode === 'cards' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredBudgetLines.map(line => (
-            <BudgetCategoryCard 
-              key={line.id} 
-              budgetLine={{
-                ...line,
-                budget: currentBudget ? {
-                  start_date: currentBudget.start_date,
-                  end_date: currentBudget.end_date,
-                  workspace_id: currentBudget.workspace_id
-                } : undefined
-              }} 
-            />
-          ))}
-        </div>
+        <>
+          {groupedView ? (
+            // Grouped view - show category groups
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {BUDGET_GROUPS.map(group => {
+                const groupedLines = groupBudgetLines(filteredBudgetLines);
+                const groupLines = groupedLines.get(group.id) || [];
+
+                if (groupLines.length === 0) return null;
+
+                return (
+                  <BudgetGroupCard
+                    key={group.id}
+                    group={group}
+                    budgetLines={groupLines.map(line => ({
+                      ...line,
+                      budget: currentBudget ? {
+                        start_date: currentBudget.start_date,
+                        end_date: currentBudget.end_date,
+                        workspace_id: currentBudget.workspace_id
+                      } : undefined
+                    }))}
+                  />
+                );
+              })}
+            </div>
+          ) : (
+            // Individual cards view
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredBudgetLines.map(line => (
+                <BudgetCategoryCard
+                  key={line.id}
+                  budgetLine={{
+                    ...line,
+                    budget: currentBudget ? {
+                      start_date: currentBudget.start_date,
+                      end_date: currentBudget.end_date,
+                      workspace_id: currentBudget.workspace_id
+                    } : undefined
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {/* Budget Insights */}

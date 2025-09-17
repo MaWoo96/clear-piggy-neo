@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Calendar, DollarSign, TrendingUp, ChevronRight, ChevronLeft, Loader2, Check, AlertCircle } from 'lucide-react';
 import { useBudget } from '../../hooks/useBudget';
 import { useTheme } from '../../contexts/ThemeContext';
+import { getCategoryName, formatCategoryInsights } from '../../utils/categoryMapping';
 
 interface BudgetWizardProps {
   onComplete: () => void;
@@ -28,6 +29,26 @@ export const BudgetWizard: React.FC<BudgetWizardProps> = ({ onComplete, onCancel
   
   const [aiSuggestions, setAiSuggestions] = useState<any>(null);
 
+  // Helper function to format insights text that contains category IDs
+  const formatInsights = (text: any): string => {
+    if (!text || typeof text !== 'string') {
+      return String(text || '');
+    }
+
+    // Build a category map from the suggested_budget if available
+    let categoryMap: Record<string, string> = {};
+    if (aiSuggestions?.suggested_budget) {
+      aiSuggestions.suggested_budget.forEach((item: any) => {
+        if (item.category_primary && item.category_display_name) {
+          categoryMap[item.category_primary] = item.category_display_name;
+        }
+      });
+    }
+
+    // Use the category mapping utility with our custom map
+    return formatCategoryInsights(text, categoryMap);
+  };
+
   // Calculate end date based on period type
   React.useEffect(() => {
     const start = new Date(formData.start_date);
@@ -51,10 +72,83 @@ export const BudgetWizard: React.FC<BudgetWizardProps> = ({ onComplete, onCancel
   const handleAnalyze = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
-      const result = await analyzeWithAI(formData.analysisMonths, formData.strategy);
+      let result = await analyzeWithAI(formData.analysisMonths, formData.strategy);
       if (result) {
+        // If we have category IDs (UUIDs), fetch their names
+        if (result.suggested_budget) {
+          console.log('Raw suggested_budget from AI:', result.suggested_budget);
+
+          const categoryIds = result.suggested_budget
+            .map((s: any) => s.category_primary)
+            .filter((id: string) => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id));
+
+          console.log('Found UUID category IDs:', categoryIds);
+
+          if (categoryIds.length > 0) {
+            const { supabase } = await import('../../lib/supabase');
+            const { data: categories, error } = await supabase
+              .from('categories')
+              .select('id, name')
+              .in('id', categoryIds);
+
+            console.log('Fetched categories from DB:', categories, 'Error:', error);
+
+            if (categories && categories.length > 0) {
+              const categoryMap = categories.reduce((acc, cat) => {
+                acc[(cat as any).id] = (cat as any).name;
+                return acc;
+              }, {} as Record<string, string>);
+
+              console.log('Category map:', categoryMap);
+
+              // Update the suggestions with category names
+              result.suggested_budget = result.suggested_budget.map((s: any) => ({
+                ...s,
+                category_display_name: categoryMap[s.category_primary] || getCategoryName(s.category_primary)
+              }));
+            } else {
+              // No categories found in DB, just use getCategoryName
+              console.log('No categories found in DB, using getCategoryName fallback');
+              result.suggested_budget = result.suggested_budget.map((s: any) => ({
+                ...s,
+                category_display_name: getCategoryName(s.category_primary)
+              }));
+            }
+          } else {
+            // No UUIDs, just use getCategoryName for all
+            console.log('No UUID categories, using getCategoryName for all');
+            result.suggested_budget = result.suggested_budget.map((s: any) => ({
+              ...s,
+              category_display_name: getCategoryName(s.category_primary)
+            }));
+          }
+
+          console.log('Final suggested_budget with names:', result.suggested_budget);
+        }
+
+        // Also update the insights text to replace UUIDs with category names
+        if (result.insights && result.suggested_budget) {
+          const categoryMap: Record<string, string> = {};
+          result.suggested_budget.forEach((item: any) => {
+            if (item.category_primary && item.category_display_name) {
+              categoryMap[item.category_primary] = item.category_display_name;
+            }
+          });
+
+          // Handle both string and array of strings
+          if (Array.isArray(result.insights)) {
+            result.insights = result.insights.map((insight: string) =>
+              formatCategoryInsights(insight, categoryMap)
+            );
+          } else {
+            // Store formatted string in a new property to avoid type issues
+            (result as any).formattedInsights = formatCategoryInsights(String(result.insights), categoryMap);
+            result.insights = (result as any).formattedInsights;
+          }
+        }
+
         setAiSuggestions(result);
         setStep(3);
       }
@@ -235,7 +329,9 @@ export const BudgetWizard: React.FC<BudgetWizardProps> = ({ onComplete, onCancel
                       isDark ? 'bg-gray-800' : 'bg-gray-50'
                     }`}
                   >
-                    <span className="text-sm">{item.category_primary}</span>
+                    <span className="text-sm">
+                      {item.category_display_name || getCategoryName(item.category_primary)}
+                    </span>
                     <span className="font-medium">
                       ${(item.suggested_amount_cents / 100).toFixed(2)}
                     </span>
@@ -268,7 +364,15 @@ export const BudgetWizard: React.FC<BudgetWizardProps> = ({ onComplete, onCancel
 
           {aiSuggestions.insights && (
             <div className={`p-4 rounded-lg ${isDark ? 'bg-blue-900/20' : 'bg-blue-50'}`}>
-              <p className="text-sm">{aiSuggestions.insights}</p>
+              {Array.isArray(aiSuggestions.insights) ? (
+                <ul className="text-sm space-y-1">
+                  {aiSuggestions.insights.map((insight: string, index: number) => (
+                    <li key={index}>{formatInsights(insight)}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm">{formatInsights(aiSuggestions.insights)}</p>
+              )}
             </div>
           )}
         </>

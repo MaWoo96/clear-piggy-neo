@@ -15,6 +15,7 @@ import { SmartReceiptTable } from './SmartReceiptTable';
 import { AIInsightsDashboard } from './AIInsightsDashboard';
 import { MercuryTransactionsClean } from './MercuryTransactionsClean';
 import { BudgetDashboardEnhanced } from './budget/BudgetDashboardEnhanced';
+import { AccountsView } from './AccountsView';
 import { format, subDays, startOfMonth } from 'date-fns';
 import { useTheme } from '../contexts/ThemeContext';
 import { useWorkspace } from '../hooks/useWorkspace';
@@ -185,17 +186,44 @@ export const Dashboard: React.FC = () => {
         return;
       }
 
-      // Load bank accounts
+      // Load bank accounts with institution data
       const { data: accountsData, error: accountsError } = await supabase
         .from('bank_accounts')
-        .select('*')
+        .select(`
+          *,
+          institution:institutions (
+            id,
+            name,
+            plaid_institution_id,
+            logo_url,
+            logo_base64,
+            primary_color
+          )
+        `)
         .eq('workspace_id', workspace.id)
         .eq('is_active', true);
 
       if (accountsError) {
         console.error('Error loading accounts:', accountsError);
       }
-      setAccounts(accountsData || []);
+
+      // Format accounts with institution data
+      const formattedAccounts = (accountsData || []).map(account => {
+        console.log('Account institution data:', {
+          name: account.institution?.name,
+          logo_url: account.institution?.logo_url,
+          logo_base64: account.institution?.logo_base64 ? 'Yes' : 'No',
+          primary_color: account.institution?.primary_color
+        });
+
+        return {
+          ...account,
+          institution_name: account.institution?.name || 'Unknown Bank',
+          institution: account.institution || {}
+        };
+      });
+
+      setAccounts(formattedAccounts);
 
       // Load transactions with date range filter
       const startDate = getDateRange();
@@ -243,23 +271,37 @@ export const Dashboard: React.FC = () => {
   };
 
   const handleDisconnectAccount = async (accountId: string) => {
+    console.log('Disconnecting account:', accountId);
     setDisconnectingAccount(accountId);
+
     try {
       // Delete transactions for this account
-      await supabase
+      const { error: txError } = await supabase
         .from('feed_transactions')
         .delete()
         .eq('bank_account_id', accountId);
-      
+
+      if (txError) {
+        console.error('Error deleting transactions:', txError);
+        throw txError;
+      }
+
       // Delete the bank account
-      await supabase
+      const { error: accountError } = await supabase
         .from('bank_accounts')
         .delete()
         .eq('id', accountId);
-      
+
+      if (accountError) {
+        console.error('Error deleting account:', accountError);
+        throw accountError;
+      }
+
+      console.log('Account disconnected successfully');
+
       // Reload the data
       await loadDashboardData();
-      
+
       setShowDisconnectConfirm(null);
     } catch (error) {
       console.error('Error disconnecting account:', error);
@@ -576,9 +618,9 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div className="ml-64">
+      <div className="ml-64 h-screen flex flex-col">
         {/* Top Bar */}
-        <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-8 py-4">
+        <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-8 py-4 flex-shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
@@ -692,7 +734,7 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* Content Area */}
-        <div className="p-8">
+        <div className="flex-1 overflow-y-auto p-8">
           {activeTab === 'overview' && (
             <div className="space-y-6">
               {/* Key Metrics */}
@@ -791,149 +833,97 @@ export const Dashboard: React.FC = () => {
                 <div className="p-6 border-b border-gray-100 dark:border-gray-700">
                   <div className="flex items-center justify-between">
                     <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Recent Transactions</h2>
-                    <button className="text-sm text-primary-600 hover:text-primary-700 font-medium">
+                    <button
+                      onClick={() => setActiveTab('transactions')}
+                      className="text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 font-medium transition-colors"
+                    >
                       View all →
                     </button>
                   </div>
                 </div>
-                <div className="divide-y divide-gray-100 dark:divide-gray-700">
-                  {transactions.slice(0, 5).map((transaction) => (
-                    <div key={transaction.id} className="px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          {transaction.merchant_logo ? (
-                            <img 
-                              src={transaction.merchant_logo} 
-                              alt=""
-                              className="w-10 h-10 rounded-full object-cover"
-                            />
-                          ) : (
-                            <div className="w-10 h-10 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center">
-                              <CreditCard className="h-5 w-5 text-gray-400 dark:text-gray-500" />
+                <div>
+                  {transactions.slice(0, 5).map((transaction, index, arr) => {
+                    // Check if we should show a date divider
+                    const currentDate = format(new Date(transaction.date), 'yyyy-MM-dd');
+                    const previousDate = index > 0 ? format(new Date(arr[index - 1].date), 'yyyy-MM-dd') : null;
+                    const showDateDivider = index === 0 || currentDate !== previousDate;
+
+                    // Format the date for the divider
+                    const today = new Date();
+                    const yesterday = new Date(today);
+                    yesterday.setDate(yesterday.getDate() - 1);
+                    const txDate = new Date(transaction.date);
+
+                    let dateLabel = format(txDate, 'MMM d, yyyy');
+                    if (format(txDate, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')) {
+                      dateLabel = 'Today';
+                    } else if (format(txDate, 'yyyy-MM-dd') === format(yesterday, 'yyyy-MM-dd')) {
+                      dateLabel = 'Yesterday';
+                    }
+
+                    return (
+                      <React.Fragment key={transaction.id}>
+                        {showDateDivider && (
+                          <div className="px-6 py-2 bg-gray-50 dark:bg-gray-900/50">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-semibold text-gray-600 dark:text-gray-400">
+                                {dateLabel}
+                              </span>
+                              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700"></div>
                             </div>
-                          )}
-                          <div>
-                            <p className="font-medium text-gray-900 dark:text-gray-100">{transaction.description}</p>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">
-                              {transaction.category} • {format(new Date(transaction.date), 'MMM d, yyyy')}
-                            </p>
+                          </div>
+                        )}
+                        <div className="px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors border-b border-gray-100 dark:border-gray-700 last:border-b-0">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              {transaction.merchant_logo ? (
+                                <img
+                                  src={transaction.merchant_logo}
+                                  alt=""
+                                  className="w-10 h-10 rounded-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-10 h-10 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center">
+                                  <CreditCard className="h-5 w-5 text-gray-400 dark:text-gray-500" />
+                                </div>
+                              )}
+                              <div>
+                                <p className="font-medium text-gray-900 dark:text-gray-100">{transaction.description}</p>
+                                <p className="text-sm text-gray-500 dark:text-gray-400">
+                                  {transaction.category}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className={`font-medium ${
+                                transaction.type === 'credit' ? 'text-success-600 dark:text-success-400' : 'text-danger-600 dark:text-danger-400'
+                              }`}>
+                                {transaction.type === 'credit' ? '+' : '-'}{formatCurrency(transaction.amount * 100)}
+                              </p>
+                              <p className="text-sm text-gray-500 dark:text-gray-400">{transaction.account}</p>
+                            </div>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <p className={`font-medium ${
-                            transaction.type === 'credit' ? 'text-success-600 dark:text-success-400' : 'text-danger-600 dark:text-danger-400'
-                          }`}>
-                            {transaction.type === 'credit' ? '+' : '-'}{formatCurrency(transaction.amount * 100)}
-                          </p>
-                          <p className="text-sm text-gray-500 dark:text-gray-400">{transaction.account}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                      </React.Fragment>
+                    );
+                  })}
                 </div>
               </motion.div>
             </div>
           )}
 
           {activeTab === 'accounts' && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between mb-6">
-                <p className="text-gray-600 dark:text-gray-400">Manage your connected accounts</p>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={refreshBalances}
-                    className="btn btn-secondary"
-                    disabled={refreshingBalances}
-                    title="Refresh account balances with real-time data from Plaid"
-                  >
-                    <RefreshCw className={`h-4 w-4 ${refreshingBalances ? 'animate-spin' : ''}`} />
-                    {refreshingBalances ? 'Refreshing...' : 'Refresh Balances'}
-                  </button>
-                  <button
-                    onClick={cleanAllBankData}
-                    className="btn btn-secondary bg-orange-600 hover:bg-orange-700 text-white"
-                    title="Clean all bank data"
-                  >
-                    🧹 Clean All
-                  </button>
-                  <PlaidLinkButton onSuccess={loadDashboardData}>
-                    <Plus className="h-4 w-4" />
-                    Add Account
-                  </PlaidLinkButton>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-6">
-                {accounts.map((account) => (
-                  <motion.div
-                    key={account.id}
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="card p-6 card-hover"
-                  >
-                    <div className="flex items-start justify-between mb-4">
-                      <div>
-                        <h3 className="font-semibold text-gray-900 dark:text-gray-100">{account.name}</h3>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">{account.institution_name}</p>
-                      </div>
-                      <div className="relative account-menu">
-                        <button 
-                          onClick={() => setShowDisconnectConfirm(showDisconnectConfirm === account.id ? null : account.id)}
-                          className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
-                        >
-                          <MoreHorizontal className="h-4 w-4 text-gray-400 dark:text-gray-500" />
-                        </button>
-                        
-                        {showDisconnectConfirm === account.id && (
-                          <div className="absolute right-0 top-8 w-48 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-2 z-10">
-                            <button
-                              onClick={() => handleDisconnectAccount(account.id)}
-                              disabled={disconnectingAccount === account.id}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-danger-600 dark:text-danger-400 hover:bg-danger-50 dark:hover:bg-danger-900/20 rounded transition-colors"
-                            >
-                              {disconnectingAccount === account.id ? (
-                                <>
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-danger-600" />
-                                  Disconnecting...
-                                </>
-                              ) : (
-                                <>
-                                  <Trash2 className="h-4 w-4" />
-                                  Disconnect Account
-                                </>
-                              )}
-                            </button>
-                            <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
-                              <AlertCircle className="h-3 w-3 inline mr-1" />
-                              This will remove all transactions
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="space-y-3">
-                      <div>
-                        <p className="text-sm text-gray-600 dark:text-gray-400">Current Balance</p>
-                        <p className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-                          {formatCurrency(account.current_balance_cents || 0)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-600 dark:text-gray-400">Available Balance</p>
-                        <p className="text-lg font-medium text-gray-700 dark:text-gray-300">
-                          {formatCurrency(account.available_balance_cents || 0)}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        Last synced: {format(new Date(account.last_sync_at || Date.now()), 'MMM d, h:mm a')}
-                      </p>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            </div>
+            <AccountsView
+              accounts={accounts}
+              refreshBalances={refreshBalances}
+              refreshingBalances={refreshingBalances}
+              cleanAllBankData={cleanAllBankData}
+              loadDashboardData={loadDashboardData}
+              handleDisconnectAccount={handleDisconnectAccount}
+              disconnectingAccount={disconnectingAccount}
+              showDisconnectConfirm={showDisconnectConfirm}
+              setShowDisconnectConfirm={setShowDisconnectConfirm}
+            />
           )}
 
           {activeTab === 'transactions' && (

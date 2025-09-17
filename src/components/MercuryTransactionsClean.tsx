@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { supabase, formatCurrency } from '../lib/supabase';
 // import { normalizeAccountName, getShortAccountName } from '../lib/accountUtils';
 import { format, startOfMonth, endOfMonth, subMonths, eachDayOfInterval } from 'date-fns';
+import { normalizeMerchantName, getMerchantLogoUrl, getMerchantColor, getMerchantInitials } from '../utils/merchantData';
 import {
   Search,
   RefreshCw, Brain,
@@ -54,98 +55,9 @@ interface Transaction {
   merchant_website?: string | null;
 }
 
-// Helper functions for merchant display
-const getMerchantInitials = (name: string): string => {
-  if (!name || name === 'Unknown Merchant') return '?';
-  
-  const words = name.split(' ').filter(word => word.length > 0);
-  if (words.length === 1) {
-    return words[0].substring(0, 2).toUpperCase();
-  }
-  return words.slice(0, 2).map(word => word.charAt(0).toUpperCase()).join('');
-};
-
-const getMerchantColor = (name: string): string => {
-  if (!name) return '#6b7280';
-  
-  // Known brand colors
-  const brandColors: { [key: string]: string } = {
-    'amazon': '#FF9900',
-    'apple': '#000000',
-    'starbucks': '#00704A',
-    'mcdonalds': '#FFC72C',
-    'target': '#CC0000',
-    'walmart': '#004c91',
-    'costco': '#00447c',
-    'uber': '#000000',
-    'lyft': '#FF00BF',
-    'netflix': '#E50914',
-    'spotify': '#1DB954',
-    'google': '#4285f4',
-    'microsoft': '#00bcf2'
-  };
-  
-  const lowerName = name.toLowerCase();
-  for (const [brand, color] of Object.entries(brandColors)) {
-    if (lowerName.includes(brand)) {
-      return color;
-    }
-  }
-  
-  // Generate consistent color from name
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  
-  const colors = [
-    '#e11d48', '#dc2626', '#ea580c', '#d97706', '#ca8a04',
-    '#65a30d', '#16a34a', '#059669', '#0d9488', '#0891b2',
-    '#0284c7', '#2563eb', '#4f46e5', '#7c3aed', '#a21caf',
-    '#be185d'
-  ];
-  
-  return colors[Math.abs(hash) % colors.length];
-};
-
-const getCleanMerchantName = (name: string | null): string => {
-  if (!name) return 'Unknown Transaction';
-  
-  // Remove common prefixes/suffixes that make names unclear
-  let cleanName = name
-    // Remove payment processor prefixes
-    .replace(/^(POS|SQ \*|TST\*|PAYPAL \*|SP |SQU\*|PMT\*|APL\*|GOOGLE \*)/i, '')
-    // Remove "ON" followed by date patterns
-    .replace(/\s+ON\s+\d{1,2}\/\d{1,2}.*/i, '')
-    // Remove reference numbers (REF#, etc.)
-    .replace(/\s+REF#.*/i, '')
-    // Remove store numbers (#1234, etc.)
-    .replace(/#\d+\s*$/, '')
-    // Remove trailing long numbers (6+ digits)
-    .replace(/\s+\d{6,}$/, '')
-    // Remove transaction IDs that look like "xxx-xxx-xxxx"
-    .replace(/\s+\d{3}-\d{3}-\d{4}.*$/, '')
-    // Remove state codes and trailing numbers
-    .replace(/\s+[A-Z]{2}\s+\d{2,}$/, '')
-    .replace(/\s+[A-Z]{2,3}$/, '')
-    // Clean up extra spaces
-    .replace(/\s+/g, ' ')
-    .trim();
-    
-  // If we stripped too much, use original
-  if (cleanName.length < 2) {
-    cleanName = name;
-  }
-  
-  // Capitalize properly (Title Case)
-  cleanName = cleanName
-    .toLowerCase()
-    .split(' ')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-  
-  return cleanName;
-};
+// Helper functions - now using imported merchant utilities
+// These are kept as aliases for backward compatibility
+const getCleanMerchantName = normalizeMerchantName;
 
 // Smart categorization function that maps Plaid + merchant data to proper parent/child categories
 const getSmartCategory = (tx: any, categories: any[]) => {
@@ -1037,36 +949,23 @@ const MercuryTransactionsCleanComponent: React.FC<MercuryTransactionsCleanProps>
     const moneyIn = transactions
       .filter(tx => tx.direction === 'inflow')
       .reduce((sum, tx) => sum + Math.abs(tx.amount_cents), 0);
-    
+
     const moneyOut = transactions
       .filter(tx => tx.direction === 'outflow')
       .reduce((sum, tx) => sum + Math.abs(tx.amount_cents), 0);
-    
+
     const netChange = moneyIn - moneyOut;
-    
+
     return { moneyIn, moneyOut, netChange };
   }, [transactions]);
 
-  // Count uncategorized transactions (improved logic)
+  // Calculate uncategorized count from current transactions
   const uncategorizedCount = useMemo(() => {
-    const uncategorized = transactions.filter(tx => {
-      const hasNoAICategory = !tx.ai_category_primary || 
-                             tx.ai_category_primary === 'Uncategorized' ||
-                             tx.ai_category_primary === 'uncategorized';
-                             
-      const hasGoodPlaidCategory = tx.personal_finance_category_primary && 
-                                  tx.personal_finance_category_confidence && 
-                                  tx.personal_finance_category_confidence > 0.6;
-                                  
-      const hasLowAIConfidence = tx.ai_category_confidence && tx.ai_category_confidence < 0.5;
-      
-      const needsCategorization = (hasNoAICategory && !hasGoodPlaidCategory) || hasLowAIConfidence;
-      
-      
-      return needsCategorization;
-    });
-    
-    return uncategorized.length;
+    return transactions.filter(tx => {
+      return tx.direction === 'outflow' &&
+             !tx.ai_category_primary &&
+             !tx.user_category_primary;
+    }).length;
   }, [transactions]);
 
   const chartData = useMemo(() => {
@@ -1227,44 +1126,6 @@ const MercuryTransactionsCleanComponent: React.FC<MercuryTransactionsCleanProps>
           </div>
         </div>
       )}
-      
-      {/* AI Categorization Bar - Shows when uncategorized transactions exist */}
-      {uncategorizedCount > 0 && (
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-b border-blue-200 dark:border-blue-800 px-6 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-1.5 bg-blue-100 dark:bg-blue-800/50 rounded-lg">
-                <Brain className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
-                  {uncategorizedCount} transaction{uncategorizedCount !== 1 ? 's' : ''} need categorization
-                </p>
-                <p className="text-xs text-blue-700 dark:text-blue-300">
-                  AI can automatically categorize these for you
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={handleAICategorize}
-              disabled={categorizing}
-              className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-blue-400 disabled:to-indigo-400 text-white text-sm font-medium rounded-lg flex items-center gap-2 transition-all shadow-sm hover:shadow-md"
-            >
-              {categorizing ? (
-                <>
-                  <RefreshCw className="h-4 w-4 animate-spin" />
-                  Analyzing...
-                </>
-              ) : (
-                <>
-                  <Brain className="h-4 w-4" />
-                  Categorize with AI
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Header with Chart */}
       <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
@@ -1355,9 +1216,11 @@ const MercuryTransactionsCleanComponent: React.FC<MercuryTransactionsCleanProps>
           </div>
           
           <div className="flex items-center gap-2">
-            <RecategorizeButton 
+            <RecategorizeButton
               workspaceId={workspace?.id || ''}
               onComplete={loadTransactions}
+              dateRange={dateRange}
+              uncategorizedTransactions={uncategorizedCount}
             />
             <button
               onClick={() => setShowWebhookTester(!showWebhookTester)}
@@ -1395,7 +1258,7 @@ const MercuryTransactionsCleanComponent: React.FC<MercuryTransactionsCleanProps>
       {/* Clean Transaction Table */}
       <div className="flex-1 overflow-auto">
         <table className="w-full">
-          <thead className="sticky top-0 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
+          <thead className="sticky top-0 z-20 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
             <tr>
               <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                 Date
@@ -1416,14 +1279,47 @@ const MercuryTransactionsCleanComponent: React.FC<MercuryTransactionsCleanProps>
             </tr>
           </thead>
           <tbody className="bg-white dark:bg-gray-800">
-            {filteredTransactions.map((tx) => {
+            {filteredTransactions.map((tx, index) => {
+              // Check if we should show a date divider
+              const currentDate = format(new Date(tx.transaction_date), 'yyyy-MM-dd');
+              const previousDate = index > 0 ? format(new Date(filteredTransactions[index - 1].transaction_date), 'yyyy-MM-dd') : null;
+              const showDateDivider = index === 0 || currentDate !== previousDate;
+
+              // Format the date for the divider
+              const today = new Date();
+              const yesterday = new Date(today);
+              yesterday.setDate(yesterday.getDate() - 1);
+              const txDate = new Date(tx.transaction_date);
+
+              let dateLabel = format(txDate, 'EEEE, MMMM d, yyyy');
+              if (format(txDate, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')) {
+                dateLabel = 'Today';
+              } else if (format(txDate, 'yyyy-MM-dd') === format(yesterday, 'yyyy-MM-dd')) {
+                dateLabel = 'Yesterday';
+              } else if (txDate.getFullYear() === today.getFullYear()) {
+                dateLabel = format(txDate, 'EEEE, MMMM d');
+              }
+
               return (
-                <tr 
-                  key={tx.id} 
-                  className={`border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-all duration-500 ${
-                    tx.recently_categorized ? 'bg-green-50 dark:bg-green-900/10' : ''
-                  }`}
-                >
+                <>
+                  {showDateDivider && (
+                    <tr key={`divider-${currentDate}`} className="bg-gray-50 dark:bg-gray-900/50">
+                      <td colSpan={6} className="px-6 py-2">
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                            {dateLabel}
+                          </span>
+                          <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700"></div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  <tr
+                    key={tx.id}
+                    className={`border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-all duration-500 ${
+                      tx.recently_categorized ? 'bg-green-50 dark:bg-green-900/10' : ''
+                    }`}
+                  >
                   {/* Date Column */}
                   <td className="px-6 py-4">
                     <div>
@@ -1442,35 +1338,44 @@ const MercuryTransactionsCleanComponent: React.FC<MercuryTransactionsCleanProps>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
                       <div className="relative w-8 h-8 flex-shrink-0">
-                        {tx.merchant_logo_url ? (
-                          <img 
-                            src={tx.merchant_logo_url} 
-                            alt={tx.merchant_name || 'Merchant'}
-                            className="w-8 h-8 rounded-full object-cover"
-                            onError={(e) => {
-                              const target = e.target as HTMLImageElement;
-                              target.style.display = 'none';
-                              const parent = target.parentElement;
-                              if (parent && !parent.querySelector('.fallback-logo')) {
-                                const fallback = document.createElement('div');
-                                fallback.className = 'fallback-logo w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white';
-                                fallback.style.background = getMerchantColor(tx.merchant_name || '');
-                                fallback.textContent = getMerchantInitials(tx.merchant_name || '');
-                                parent.appendChild(fallback);
-                              }
-                            }}
-                          />
-                        ) : null}
-                        <div 
-                          className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white ${tx.merchant_logo_url ? 'hidden' : ''}`}
-                          style={{ background: getMerchantColor(tx.merchant_name || '') }}
-                        >
-                          {getMerchantInitials(tx.merchant_name || '')}
-                        </div>
+                        {(() => {
+                          // Get enriched merchant data
+                          const normalizedName = normalizeMerchantName(tx.merchant_name);
+                          const merchantLogoUrl = tx.merchant_logo_url || getMerchantLogoUrl(normalizedName);
+                          const merchantColor = getMerchantColor(normalizedName);
+                          const merchantInitials = getMerchantInitials(normalizedName);
+
+                          return merchantLogoUrl ? (
+                            <img
+                              src={merchantLogoUrl}
+                              alt={normalizedName}
+                              className="w-8 h-8 rounded-full object-contain bg-gray-50 dark:bg-gray-800 p-0.5"
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement;
+                                target.style.display = 'none';
+                                const parent = target.parentElement;
+                                if (parent && !parent.querySelector('.fallback-logo')) {
+                                  const fallback = document.createElement('div');
+                                  fallback.className = 'fallback-logo w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white';
+                                  fallback.style.background = merchantColor;
+                                  fallback.textContent = merchantInitials;
+                                  parent.appendChild(fallback);
+                                }
+                              }}
+                            />
+                          ) : (
+                            <div
+                              className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white"
+                              style={{ background: merchantColor }}
+                            >
+                              {merchantInitials}
+                            </div>
+                          );
+                        })()}
                       </div>
                       <div>
                         <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                          {getCleanMerchantName(tx.merchant_name) || 'Unknown Transaction'}
+                          {normalizeMerchantName(tx.merchant_name)}
                         </p>
                         {tx.description && tx.description !== tx.merchant_name && (
                           <p className="text-xs text-gray-500 dark:text-gray-400 truncate max-w-xs">
@@ -1530,6 +1435,7 @@ const MercuryTransactionsCleanComponent: React.FC<MercuryTransactionsCleanProps>
                     </button>
                   </td>
                 </tr>
+                </>
               );
             })}
           </tbody>

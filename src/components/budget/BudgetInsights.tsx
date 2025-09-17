@@ -83,11 +83,14 @@ export const BudgetInsights: React.FC<BudgetInsightsProps> = ({ budgetId }) => {
       );
       
       if (overBudgetLines?.length > 0) {
+        // The line_name already contains the human-readable category name
+        const categoryName = overBudgetLines[0].line_name || 'this category';
+
         generatedInsights.push({
           id: 'overspending',
           type: 'warning',
           title: `${overBudgetLines.length} categories over budget`,
-          description: `Consider reducing spending in ${overBudgetLines[0].line_name.toLowerCase()} which is ${
+          description: `Consider reducing spending in ${categoryName} which is ${
             ((overBudgetLines[0].spent_cents / overBudgetLines[0].budgeted_amount_cents - 1) * 100).toFixed(0)
           }% over budget.`,
           icon: <AlertCircle className="h-5 w-5" />

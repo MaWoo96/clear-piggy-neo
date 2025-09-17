@@ -207,7 +207,25 @@ serve(async (req) => {
         if (institutionResponse.ok) {
           const instData = await institutionResponse.json();
           const inst = instData.institution;
-          
+
+          // Fallback logos for major banks when Plaid doesn't provide them
+          const institutionLogos: Record<string, string> = {
+            'Wells Fargo': 'https://plaid-merchant-logos.plaid.com/wells_fargo_756.png',
+            'Chase': 'https://plaid-merchant-logos.plaid.com/chase_5.png',
+            'Bank of America': 'https://plaid-merchant-logos.plaid.com/bank_of_america_1024.png',
+            'Citibank': 'https://plaid-merchant-logos.plaid.com/citi_983.png',
+            'Capital One': 'https://plaid-merchant-logos.plaid.com/capital_one_360_757.png',
+            'US Bank': 'https://plaid-merchant-logos.plaid.com/us_bank_875.png',
+            'PNC': 'https://plaid-merchant-logos.plaid.com/pnc_662.png',
+            'TD Bank': 'https://plaid-merchant-logos.plaid.com/td_bank_1089.png'
+          };
+
+          // Check if Plaid provided a logo
+          const plaidLogo = inst.logo || null;
+          const fallbackLogoUrl = institutionLogos[inst.name] || null;
+
+          console.log(`Institution: ${inst.name}, Logo from Plaid: ${plaidLogo ? 'Yes' : 'No'}`);
+
           // Use the database function to upsert institution (bypasses RLS)
           console.log('Upserting institution via database function');
           const { data: instResult, error: instError } = await dbClient.rpc('upsert_institution', {
@@ -216,7 +234,7 @@ serve(async (req) => {
             p_plaid_item_id: itemId,
             p_plaid_access_token_encrypted: encryptedToken,
             p_name: inst.name,
-            p_logo_url: inst.logo || null,
+            p_logo_url: plaidLogo || fallbackLogoUrl, // Use Plaid logo or simple fallback first
             p_hex_color: inst.primary_color || null,
             p_website_url: inst.url || null,
             p_routing_numbers: inst.routing_numbers || [],
@@ -229,6 +247,7 @@ serve(async (req) => {
           } else {
             console.log('Institution saved/updated successfully');
             console.log('Result:', instResult);
+
             // Get the full institution data
             const { data: fullInst } = await dbClient
               .from('institutions')
@@ -236,6 +255,36 @@ serve(async (req) => {
               .eq('id', instResult.id)
               .single();
             institutionData = fullInst || { id: instResult.id };
+
+            // If Plaid didn't provide a logo, call enrichment function
+            if (!plaidLogo) {
+              console.log(`No logo from Plaid for ${inst.name}, calling enrichment function...`);
+              try {
+                const enrichResponse = await fetch(`${supabaseUrl}/functions/v1/enrich-institution-logos`, {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${serviceRoleKey}`,
+                    'Content-Type': 'application/json'
+                  },
+                  body: JSON.stringify({
+                    institution_id: instResult.id,
+                    workspace_id: workspace_id,
+                    force_refresh: false
+                  })
+                });
+
+                const enrichResult = await enrichResponse.json();
+                if (enrichResult.success) {
+                  console.log(`✅ Logo enriched from ${enrichResult.source} for ${inst.name}`);
+                  // Update institutionData with enriched logo
+                  institutionData.logo_url = enrichResult.logo_url;
+                } else {
+                  console.log(`❌ Logo enrichment failed for ${inst.name}: ${enrichResult.message}`);
+                }
+              } catch (enrichErr) {
+                console.error('Error calling logo enrichment:', enrichErr);
+              }
+            }
           }
         }
       } catch (instErr) {

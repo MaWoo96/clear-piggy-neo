@@ -347,34 +347,41 @@ export const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                       <div className="w-20 h-20 mx-auto bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center">
                         <Wallet className="h-10 w-10 text-white" />
                       </div>
-                      
+
                       <div>
-                        <h3 className="font-semibold text-lg mb-2">Ready to Connect</h3>
+                        <h3 className="font-semibold text-lg text-gray-900 dark:text-white mb-2">Ready to Connect</h3>
                         <p className="text-gray-600 dark:text-gray-400 text-sm">
                           We use bank-level encryption to protect your data
                         </p>
                       </div>
 
-                      <PlaidLinkButton
-                        onSuccess={handleBankConnected}
-                        onExit={() => setIsConnecting(false)}
-                      >
-                        <motion.button
-                          whileHover={{ scale: 1.05 }}
-                          whileTap={{ scale: 0.95 }}
-                          className="w-full px-6 py-3 bg-gradient-to-r from-primary-500 to-secondary-500 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all"
-                          onClick={() => setIsConnecting(true)}
+                      <div className="space-y-3">
+                        <PlaidLinkButton
+                          onSuccess={handleBankConnected}
+                          onExit={() => setIsConnecting(false)}
                         >
-                          Connect Bank Account
-                        </motion.button>
-                      </PlaidLinkButton>
+                          <motion.div
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
+                            className="w-full"
+                          >
+                            <button
+                              className="w-full px-6 py-4 bg-gradient-to-r from-primary-500 to-secondary-500 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all flex items-center justify-center"
+                              onClick={() => setIsConnecting(true)}
+                            >
+                              <CreditCard className="h-5 w-5 mr-2" />
+                              Connect Bank Account
+                            </button>
+                          </motion.div>
+                        </PlaidLinkButton>
 
-                      <button
-                        onClick={() => setCurrentStep(4)}
-                        className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                      >
-                        Skip for now
-                      </button>
+                        <button
+                          onClick={() => setCurrentStep(4)}
+                          className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+                        >
+                          Skip for now
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <div className="text-center space-y-6">

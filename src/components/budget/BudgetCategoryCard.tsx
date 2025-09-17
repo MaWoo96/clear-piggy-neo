@@ -119,12 +119,9 @@ export const BudgetCategoryCard: React.FC<BudgetCategoryCardProps> = ({ budgetLi
       >
         <div className="flex items-start justify-between mb-3">
           <div className="flex items-center gap-2">
-            {budgetLine.categories?.icon && (
-              <span className="text-2xl">{budgetLine.categories.icon}</span>
-            )}
             <div>
               <h3 className="font-medium text-gray-900 dark:text-gray-100">
-                {budgetLine.categories?.name || budgetLine.line_name.replace(/_/g, ' ').toLowerCase()}
+                {budgetLine.categories?.name || budgetLine.line_name}
               </h3>
               {budgetLine.ai_suggested && (
                 <div className="flex items-center gap-1 mt-0.5">

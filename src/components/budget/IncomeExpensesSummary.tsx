@@ -46,7 +46,7 @@ export const IncomeExpensesSummary: React.FC<IncomeExpensesSummaryProps> = ({
           )}
         </div>
         <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-          {formatCurrency(totalIncome / 100)}
+          {formatCurrency(totalIncome)}
         </div>
       </div>
 
@@ -62,7 +62,7 @@ export const IncomeExpensesSummary: React.FC<IncomeExpensesSummaryProps> = ({
           )}
         </div>
         <div className="text-2xl font-bold text-red-600 dark:text-red-400">
-          {formatCurrency(totalExpenses / 100)}
+          {formatCurrency(totalExpenses)}
         </div>
       </div>
 
@@ -78,7 +78,7 @@ export const IncomeExpensesSummary: React.FC<IncomeExpensesSummaryProps> = ({
           )}
         </div>
         <div className={`text-2xl font-bold ${netCashFlow >= 0 ? 'text-blue-600 dark:text-blue-400' : 'text-orange-600 dark:text-orange-400'}`}>
-          {formatCurrency(netCashFlow / 100)}
+          {formatCurrency(netCashFlow)}
         </div>
       </div>
     </div>

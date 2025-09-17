@@ -164,18 +164,52 @@ serve(async (req) => {
           const inst = instData.institution;
 
           // Update institution with latest data
+          const logoUrl = inst.logo || institution.logo_url;
+          const hexColor = inst.primary_color || institution.hex_color;
+
           await dbClient
             .from('institutions')
             .update({
               name: inst.name,
-              logo_url: inst.logo || institution.logo_url,
-              hex_color: inst.primary_color || institution.hex_color,
+              logo_url: logoUrl,
+              hex_color: hexColor,
               website_url: inst.url || institution.website_url,
               updated_at: new Date().toISOString()
             })
             .eq('id', institution_id);
 
           console.log(`Updated institution metadata for ${inst.name}`);
+
+          // If still no logo, try enrichment
+          if (!logoUrl || logoUrl === 'No') {
+            console.log(`No logo from Plaid for ${inst.name}, attempting enrichment...`);
+            try {
+              const supabaseUrl = Deno.env.get('SUPABASE_URL');
+              const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+              const enrichResponse = await fetch(`${supabaseUrl}/functions/v1/enrich-institution-logos`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${serviceRoleKey}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  institution_id: institution_id,
+                  workspace_id: workspace_id,
+                  force_refresh: false
+                })
+              });
+
+              const enrichResult = await enrichResponse.json();
+              if (enrichResult.success) {
+                console.log(`✅ Logo enriched from ${enrichResult.source} for ${inst.name}`);
+              } else {
+                console.log(`❌ Logo enrichment failed for ${inst.name}: ${enrichResult.message}`);
+              }
+            } catch (enrichErr) {
+              console.error('Error calling logo enrichment:', enrichErr);
+            }
+          }
         }
       } catch (err) {
         console.error('Error updating institution details:', err);

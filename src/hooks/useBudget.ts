@@ -159,8 +159,27 @@ export function useBudget() {
       let categoriesOverBudget = 0;
 
       const updatedLines = lines.map(line => {
-        // Match by line_name (which contains the category like "LOAN_PAYMENTS")
-        const spent = categorySpending.get((line as any).line_name || (line as any).category_id || '') || 0;
+        // Try to match by category code stored in metadata first
+        let categoryCode = (line as any).metadata?.category_code;
+
+        // Fall back to category_id if no metadata
+        if (!categoryCode && (line as any).category_id) {
+          categoryCode = (line as any).category_id;
+        }
+
+        // If still no category code, try to reverse map from line_name
+        if (!categoryCode) {
+          // Try to find the Plaid category code from the display name
+          const { CATEGORY_MAPPINGS } = require('../utils/categoryMapping');
+          for (const [code, name] of Object.entries(CATEGORY_MAPPINGS)) {
+            if (name === (line as any).line_name) {
+              categoryCode = code;
+              break;
+            }
+          }
+        }
+
+        const spent = categoryCode ? (categorySpending.get(categoryCode) || 0) : 0;
         const remaining = (line as any).budgeted_amount_cents - spent;
         totalSpent += spent;
 
@@ -300,19 +319,59 @@ export function useBudget() {
 
       if (aiSuggestions && aiSuggestions.suggested_budget) {
         console.log('Creating budget lines from AI suggestions:', aiSuggestions.suggested_budget.length);
-        
-        const lines = aiSuggestions.suggested_budget.map(suggestion => ({
-          budget_id: (budget as any).id,
-          workspace_id: workspace.id,
-          line_name: suggestion.category_primary,
-          budgeted_amount_cents: suggestion.suggested_amount_cents,
-          spent_cents: 0,
-          remaining_cents: suggestion.suggested_amount_cents,
-          ai_suggested: true,
-          ai_confidence: suggestion.confidence_score,
-          created_by: userProfileId,
-          updated_by: userProfileId
-        }));
+
+        // If category_primary looks like a UUID, fetch the category names
+        const categoryIds = aiSuggestions.suggested_budget
+          .map(s => s.category_primary)
+          .filter(id => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id));
+
+        let categoryMap: Record<string, string> = {};
+        if (categoryIds.length > 0) {
+          const { data: categories } = await supabase
+            .from('categories')
+            .select('id, name')
+            .in('id', categoryIds);
+
+          if (categories) {
+            categoryMap = categories.reduce((acc, cat) => {
+              acc[(cat as any).id] = (cat as any).name;
+              return acc;
+            }, {} as Record<string, string>);
+          }
+        }
+
+        const lines = aiSuggestions.suggested_budget.map(suggestion => {
+          // Determine if this is a UUID category
+          const isUUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(suggestion.category_primary);
+
+          // Get the display name
+          let displayName = suggestion.category_primary;
+          if (isUUID && categoryMap[suggestion.category_primary]) {
+            displayName = categoryMap[suggestion.category_primary];
+          } else if (!isUUID) {
+            // It's a Plaid category code, format it nicely
+            const { getCategoryName } = require('../utils/categoryMapping');
+            displayName = getCategoryName(suggestion.category_primary);
+          }
+
+          return {
+            budget_id: (budget as any).id,
+            workspace_id: workspace.id,
+            category_id: isUUID ? suggestion.category_primary : null,
+            line_name: displayName, // Always use the human-readable name
+            budgeted_amount_cents: suggestion.suggested_amount_cents,
+            spent_cents: 0,
+            remaining_cents: suggestion.suggested_amount_cents,
+            ai_suggested: true,
+            ai_confidence: suggestion.confidence_score,
+            created_by: userProfileId,
+            updated_by: userProfileId,
+            // Store the original category code for matching with transactions
+            metadata: {
+              category_code: suggestion.category_primary
+            }
+          };
+        });
 
         const { data: insertedLines, error: linesError } = await (supabase as any)
           .from('budget_lines')
@@ -323,24 +382,89 @@ export function useBudget() {
           console.error('Failed to create budget lines:', linesError);
           throw linesError;
         }
-        
+
         console.log('Budget lines created successfully:', insertedLines?.length);
 
         const totalBudgeted = lines.reduce((sum, line) => sum + line.budgeted_amount_cents, 0);
-        
+
         const { error: updateError } = await (supabase as any)
           .from('budgets')
           .update({ total_budgeted_cents: totalBudgeted })
           .eq('id', (budget as any).id);
 
         if (updateError) throw updateError;
-        
+
         // Update spending for the new budget
         console.log('Updating spending for new budget...');
         await (supabase as any).rpc('update_budget_line_spending', {
           p_workspace_id: workspace.id,
           p_budget_id: (budget as any).id
         });
+      } else {
+        // Create default budget lines for custom budget
+        console.log('Creating default budget lines for custom budget...');
+
+        // Get categories to create default budget lines
+        const { data: categories, error: catError } = await supabase
+          .from('categories')
+          .select('id, name, parent_category_id')
+          .eq('workspace_id', workspace.id)
+          .is('parent_category_id', null); // Get only parent categories
+
+        if (!catError && categories && categories.length > 0) {
+          // Create budget lines with zero amounts for user to fill in
+          const defaultLines = categories.map(category => ({
+            budget_id: (budget as any).id,
+            workspace_id: workspace.id,
+            category_id: category.id,
+            line_name: category.name,
+            budgeted_amount_cents: 0, // Start with 0 for user to set
+            spent_cents: 0,
+            remaining_cents: 0,
+            ai_suggested: false,
+            created_by: userProfileId,
+            updated_by: userProfileId
+          }));
+
+          const { error: linesError } = await supabase
+            .from('budget_lines')
+            .insert(defaultLines);
+
+          if (linesError) {
+            console.error('Failed to create default budget lines:', linesError);
+          } else {
+            console.log('Default budget lines created successfully');
+          }
+        } else {
+          // If no categories exist, create basic default lines
+          const basicCategories = [
+            'Housing', 'Transportation', 'Food & Dining', 'Shopping',
+            'Entertainment', 'Bills & Utilities', 'Healthcare', 'Personal',
+            'Savings', 'Other'
+          ];
+
+          const defaultLines = basicCategories.map(categoryName => ({
+            budget_id: (budget as any).id,
+            workspace_id: workspace.id,
+            line_name: categoryName,
+            budgeted_amount_cents: 0,
+            spent_cents: 0,
+            remaining_cents: 0,
+            ai_suggested: false,
+            created_by: userProfileId,
+            updated_by: userProfileId
+          }));
+
+          const { error: linesError } = await supabase
+            .from('budget_lines')
+            .insert(defaultLines);
+
+          if (linesError) {
+            console.error('Failed to create basic budget lines:', linesError);
+          } else {
+            console.log('Basic budget lines created successfully');
+          }
+        }
       }
 
       await fetchActiveBudget();
